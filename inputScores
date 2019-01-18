@@ -14,14 +14,14 @@ def parseLearningTargets(targets=''):
 
     return output
 
-def fetchStudents(conn, period):
+def fetchStudents(conn, period, semester):
     c = conn.cursor()
-    c.execute('SELECT * FROM students WHERE period = :period', {"period": period})
+    c.execute('SELECT * FROM students WHERE period = :period AND semester = :semester', {"period": period, "semester": semester})
     return c.fetchall()
 
-def fetchStudent(conn, student_name):
+def fetchStudent(conn, student_name, semester):
     c = conn.cursor()
-    c.execute("SELECT * FROM students WHERE name like :name", {"name": student_name })
+    c.execute("SELECT * FROM students WHERE name like :name AND semester = :semester", {"name": student_name, "semester": semester })
     return c.fetchone()
 
 def insertScore(conn, values):
@@ -34,16 +34,24 @@ def insertScore(conn, values):
 def addScores(cursor, student, targets, reasses):
     print("Adding Scores for " + student['name'])
     for t in targets:
-        score = input(t['unit'] + t['target'] + ': ')
+        score = raw_input(t['unit'] + t['target'] + ': ')
 
-        insertScore(cursor, {
-            "sid" : student['id'],
-            "unit" : t["unit"],
-            "target" : t["target"],
-            "score" : score,
-            "reasses" : reasses
-        })
-
+        while score not in ['0', '1', '2', '3', '4', 'x']:
+            print("Must enter 0, 1, 2, 3, or 4!")
+            score = raw_input(t['unit'] + t['target'] + ': ')
+            
+        if score == 'x':
+            print("Skipped " + t['unit'] + t['target'])
+        else:
+            insertScore(cursor, {
+                "sid" : student['id'],
+                "unit" : t["unit"],
+                "target" : t["target"],
+                "score" : int(score),
+                "reasses" : reasses
+            })
+        
+        
 def main():
     parser = OptionParser()
     # <target_names> <period>
@@ -62,14 +70,14 @@ def main():
     connection.row_factory = sqlite3.Row
 
     if len(options.student_name):
-        student = fetchStudent(connection, options.student_name)
+        student = fetchStudent(connection, options.student_name, args[1])
         addScores(connection, student, targets, 'TRUE')
     else:
         if len(options.period) == 0:
             print('[ERROR] You must provide a period to search for...')
             return
 
-        students = fetchStudents(connection, options.period)
+        students = fetchStudents(connection, options.period, args[1])
         for s in students:
             addScores(connection, s, targets, 'FALSE')
 

@@ -15,9 +15,7 @@
     LEFT JOIN 
         students s on s.id = lt.student_id
     WHERE
-        s.period = ?
-    AND
-        lt.date_marked <= ?
+        s.period = ?  AND s.semester = ? AND lt.date_marked <= ?
     GROUP BY 
         lt.student_id,
         lt.unit,

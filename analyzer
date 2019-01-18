@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+
 import re
 import sqlite3
 from optparse import OptionParser
@@ -68,7 +69,7 @@ class LearningTargetScore:
             else:
                 letter_grade = 50
         else:
-            if (total_met_standards >= cutoffs['A']) and self.score_distribution[4] >= (total / 2):
+            if (total_met_standards >= cutoffs['A']) and self.score_distribution[4] >= int(total / 2):
                 letter_grade = 95
             elif total_met_standards >= cutoffs['B']:
                 letter_grade = 85
@@ -84,13 +85,13 @@ class LearningTargetScore:
     def finalize(self):
         return self._calculate_cutoff()
 
-def fetchOverall(connection, period, date):
+def fetchOverall(connection, period, semester, date):
     c = connection.cursor()
 
     result = {}
 
     with open('STDBG.sql', 'r') as query:
-        c.execute(query.read(), [period, date])
+        c.execute(query.read(), [period, semester, date])
 
         for row in c:
             result[row['name']] = {
@@ -100,23 +101,26 @@ def fetchOverall(connection, period, date):
 
     return result
 
-def fetchLT(connection, period, unit, target, date):
+def fetchLT(connection, period, semester, unit, target, date):
     c = connection.cursor()
 
     result = {}
 
     with open('targets.sql', 'r') as query:
-        c.execute(query.read(), [period, unit, target, date])
+        c.execute(query.read(), [period, semester, unit, target, date])
 
         for row in c:
-            result[row['name']] = int(row['score'])
+            result[row['name']] = {
+                'score': int(row['score']),
+                'attempts': int(row['attempts']) 
+            }
 
     return result
 
-def prRed(skk, fmt='{}', end='\n'): print(("\033[91m " + fmt + " \033[00m").format(skk), end=end)
-def prGreen(skk, fmt='{}', end='\n'): print(("\033[92m " + fmt + " \033[00m").format(skk), end=end)
-def prYellow(skk, fmt='{}', end='\n'): print(("\033[93m " + fmt + " \033[00m").format(skk), end=end)
-def prLightPurple(skk, fmt='{}', end='\n'): print(("\033[94m " + fmt + " \033[00m").format(skk), end=end)
+def prRed(skk, fmt='{}', end='\n'): print(("\x1b[31m " + fmt + " \x1b[0m").format(skk), end=end)
+def prGreen(skk, fmt='{}', end='\n'): print(("\x1b[32m " + fmt + " \x1b[0m").format(skk), end=end)
+def prYellow(skk, fmt='{}', end='\n'): print(("\x1b[33m " + fmt + " \x1b[0m").format(skk), end=end)
+def prLightPurple(skk, fmt='{}', end='\n'): print(("\x1b[34m " + fmt + " \x1b[0m").format(skk), end=end)
 
 def parseLearningTargets(targets=''):
     output = []
@@ -137,6 +141,7 @@ def main():
     parser.add_option('-d', dest='diff_date', default='')
     parser.add_option('-f', dest='from_date', default="date('now')")
     parser.add_option('-t', dest='target_names', default='')
+    parser.add_option('-c', dest='count', action='store_true', default=False)
     (options, args) = parser.parse_args()
 
     targets = parseLearningTargets(options.target_names)
@@ -146,17 +151,17 @@ def main():
     connection.create_aggregate('STDBG', 1, LearningTargetScore)
     connection.create_aggregate('PASS_INDEX', 1, PassingIndex)
 
-    results = fetchOverall(connection, args[0], options.from_date)
+    results = fetchOverall(connection, args[0], args[1], options.from_date)
 
     learning_targets = {}
 
     for t in targets:
-        learning_targets[t['unit'] + t['target']] = fetchLT(connection, args[0], t['unit'], t['target'], options.from_date)
+        learning_targets[t['unit'] + t['target']] = fetchLT(connection, args[0], args[1], t['unit'], t['target'], options.from_date)
 
     if options.diff_date:
-        old_results = fetchOverall(connection, args[0], options.diff_date)
+        old_results = fetchOverall(connection, args[0], args[1], options.diff_date)
 
-        print('{0:<25s}:'.format('NAME'), end='')
+        print(' {0:<25s}: '.format('NAME'), end='')
         prLightPurple('OLD', fmt='{0:>4s}', end='')
         print('->', end='')
         prLightPurple('NEW', fmt='{0:>4s}', end='')
@@ -164,8 +169,12 @@ def main():
 
         old_learning_targets = {}
         for t in targets:
-            old_learning_targets[t['unit'] + t['target']] = fetchLT(connection, args[0], t['unit'], t['target'], options.diff_date)
-            prLightPurple(t['unit'] + t['target'], fmt='{0:>9s}', end='')
+            old_learning_targets[t['unit'] + t['target']] = fetchLT(connection, args[0], args[1], t['unit'], t['target'], options.diff_date)
+            if (options.count):
+                prLightPurple(t['unit'] + t['target'], fmt='{0:>15s}', end='')
+            else:
+                prLightPurple(t['unit'] + t['target'], fmt='{0:>10s}', end='')
+
         print('')
 
         for student in results:
@@ -175,7 +184,7 @@ def main():
             pndx = results[student]['pndx']
 
             if pndx == 4:
-                print('{0:<25s}:'.format(student), end='')
+                print(' {0:<25s}: '.format(student), end='')
             elif pndx == 3:
                 prGreen(student, fmt='{0:<25s}:', end='')
             elif pndx == 2:
@@ -209,28 +218,51 @@ def main():
                 prYellow(diff, fmt='{0:4d}', end='')
 
             for t in targets:
-                current_lt = learning_targets[t['unit'] + t['target']][student]
-                previous_lt = old_learning_targets[t['unit'] + t['target']][student]
+                count = learning_targets.get(t['unit'] + t['target'], {}).get(student, {}).get('attempts', 0) 
+                current_lt = learning_targets.get(t['unit'] + t['target'], {}).get(student, {}).get('score', 0) 
+                previous_lt = old_learning_targets.get(t['unit'] + t['target'], {}).get(student, {}).get('score', 0) 
 
                 if (previous_lt >= 3):
                     prGreen(previous_lt, fmt='{0:4d}', end='')
-                else:
+                elif (previous_lt > 0):
                     prRed(previous_lt, fmt='{0:4d}', end='')
+                else:
+                    prYellow(previous_lt, fmt='{0:4d}', end='')
 
                 print('->', end='')
-
-                if (previous_lt >= 3):
-                    prGreen(current_lt, end='')
+                if (current_lt >= 3):
+                    prGreen(current_lt, fmt='{0:2d}', end='')
+                elif (current_lt > 0):
+                    prRed(current_lt, fmt='{0:2d}', end='')
                 else:
-                    prRed(current_lt, end='')
+                    prYellow(current_lt, fmt='{0:2d}', end='')
+                    
+                if (options.count):
+                    print('(', end='')
+                    if (count > 1):
+                        prLightPurple(count, fmt='{0:<1d}', end='')
+                    else:
+                        prYellow(count, fmt='{0:<1d}', end='')
+                    print(')', end='')
 
             print('')
 
     else:
+        if not options.only_grades:
+            print('{0:<25s}:'.format('NAME'), end='')
+            prLightPurple('GRADE', fmt='{0:>4s}', end='')
+            for t in targets:
+                if (options.count): 
+                    prLightPurple(t['unit'] + t['target'], fmt='{0:>9s}', end='')
+                else:    
+                    prLightPurple(t['unit'] + t['target'], fmt='{0:>4s}', end='')
+            print('')
+        
         for student in results:
             if options.only_grades:
                 print('{0:d}'.format(results[student]['grade']));
             else:
+                
                 current = results[student]['grade']
                 pndx = results[student]['pndx']
 
@@ -253,12 +285,23 @@ def main():
                     prYellow(current, fmt='{0:4d}', end='')
 
                 for t in targets:
-                    current_lt = learning_targets[t['unit'] + t['target']][student]
+                    count = learning_targets.get(t['unit'] + t['target'], {}).get(student, {}).get('attempts', 0) 
+                    current_lt = learning_targets.get(t['unit'] + t['target'], {}).get(student, {}).get('score', 0) 
 
                     if (current_lt >= 3):
                         prGreen(current_lt, fmt='{0:4d}', end='')
-                    else:
+                    elif (current_lt > 0):
                         prRed(current_lt, fmt='{0:4d}', end='')
+                    else:
+                        prYellow(current_lt, fmt='{0:4d}', end='')
+
+                    if (options.count):
+                        print('(', end='')
+                        if (count > 1):
+                            prLightPurple(count, fmt='{0:<1d}', end='')
+                        else:
+                            prYellow(count, fmt='{0:<1d}', end='')
+                        print(')', end='')
 
                 print('')
 
