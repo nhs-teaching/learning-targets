@@ -1,0 +1,268 @@
+#!/usr/bin/env python
+import re
+import sqlite3
+from optparse import OptionParser
+
+class PassingIndex:
+    def __init__(self):
+        self.score_distribution = [0, 0, 0, 0, 0]
+
+    def step(self, value):
+        self.score_distribution[value] += 1
+
+    def _calculate_index(self):
+        total = sum(self.score_distribution)
+
+        cutoffs = {
+            "A": int(total*0.90),
+            "B": int(total*0.80),
+            "C": int(total*0.65),
+            "D": int(total*0.50)
+        }
+        total_met_standards = self.score_distribution[3] + self.score_distribution[4]
+
+        index = 0
+
+        if total_met_standards >= cutoffs['C']:
+            # Already passing
+            index = 4
+        elif total_met_standards >= cutoffs['D']:
+            # Within reach with 17 LTs it would take 3 retakes to get there
+            index = 3
+        elif total_met_standards >= (cutoffs['D'] - 3):
+            index = 2
+        elif total_met_standards >= (cutoffs['D'] - 6):
+            index = 1
+
+        return index
+
+    def finalize(self):
+        return self._calculate_index()
+
+class LearningTargetScore:
+    def __init__(self):
+        self.score_distribution = [0, 0, 0, 0, 0]
+
+    def step(self, value):
+        self.score_distribution[value] += 1
+
+    def _calculate_cutoff(self):
+        letter_grade = -1
+
+        total = sum(self.score_distribution)
+        cutoffs = {
+            "A": int(total*0.90),
+            "B": int(total*0.80),
+            "C": int(total*0.65),
+            "D": int(total*0.50)
+        }
+        total_met_standards = self.score_distribution[3] + self.score_distribution[4]
+
+        if self.score_distribution[1] > 0:
+            if total_met_standards >= cutoffs['B']:
+                letter_grade = 79
+            elif total_met_standards >= cutoffs['C']:
+                letter_grade = 75
+            elif total_met_standards >= cutoffs['D']:
+                letter_grade = 65
+            else:
+                letter_grade = 50
+        else:
+            if (total_met_standards >= cutoffs['A']) and self.score_distribution[4] >= (total / 2):
+                letter_grade = 95
+            elif total_met_standards >= cutoffs['B']:
+                letter_grade = 85
+            elif total_met_standards >= cutoffs['C']:
+                letter_grade = 75
+            elif total_met_standards >= cutoffs['D']:
+                letter_grade = 65
+            else:
+                letter_grade = 50
+
+        return letter_grade
+
+    def finalize(self):
+        return self._calculate_cutoff()
+
+def fetchOverall(connection, period, date):
+    c = connection.cursor()
+
+    result = {}
+
+    with open('STDBG.sql', 'r') as query:
+        c.execute(query.read(), [period, date])
+
+        for row in c:
+            result[row['name']] = {
+                'grade': int(row['grade']),
+                'pndx': int(row['pndx'])
+            }
+
+    return result
+
+def fetchLT(connection, period, unit, target, date):
+    c = connection.cursor()
+
+    result = {}
+
+    with open('targets.sql', 'r') as query:
+        c.execute(query.read(), [period, unit, target, date])
+
+        for row in c:
+            result[row['name']] = int(row['score'])
+
+    return result
+
+def prRed(skk, fmt='{}', end='\n'): print(("\033[91m " + fmt + " \033[00m").format(skk), end=end)
+def prGreen(skk, fmt='{}', end='\n'): print(("\033[92m " + fmt + " \033[00m").format(skk), end=end)
+def prYellow(skk, fmt='{}', end='\n'): print(("\033[93m " + fmt + " \033[00m").format(skk), end=end)
+def prLightPurple(skk, fmt='{}', end='\n'): print(("\033[94m " + fmt + " \033[00m").format(skk), end=end)
+
+def parseLearningTargets(targets=''):
+    output = []
+    if len(targets) == 0:
+        return output
+
+    target_list = targets.split(',')
+
+    for t in target_list:
+        m = re.search('(\d)(\w)', t)
+        output.append({'unit': m.group(1), 'target': m.group(2)})
+
+    return output
+
+def main():
+    parser = OptionParser()
+    parser.add_option('-g', dest='only_grades', action="store_true", default=False)
+    parser.add_option('-d', dest='diff_date', default='')
+    parser.add_option('-f', dest='from_date', default="date('now')")
+    parser.add_option('-t', dest='target_names', default='')
+    (options, args) = parser.parse_args()
+
+    targets = parseLearningTargets(options.target_names)
+
+    connection = sqlite3.connect('db.sqlite')
+    connection.row_factory = sqlite3.Row
+    connection.create_aggregate('STDBG', 1, LearningTargetScore)
+    connection.create_aggregate('PASS_INDEX', 1, PassingIndex)
+
+    results = fetchOverall(connection, args[0], options.from_date)
+
+    learning_targets = {}
+
+    for t in targets:
+        learning_targets[t['unit'] + t['target']] = fetchLT(connection, args[0], t['unit'], t['target'], options.from_date)
+
+    if options.diff_date:
+        old_results = fetchOverall(connection, args[0], options.diff_date)
+
+        print('{0:<25s}:'.format('NAME'), end='')
+        prLightPurple('OLD', fmt='{0:>4s}', end='')
+        print('->', end='')
+        prLightPurple('NEW', fmt='{0:>4s}', end='')
+        prLightPurple('DIFF', fmt='{0:>4s}', end='')
+
+        old_learning_targets = {}
+        for t in targets:
+            old_learning_targets[t['unit'] + t['target']] = fetchLT(connection, args[0], t['unit'], t['target'], options.diff_date)
+            prLightPurple(t['unit'] + t['target'], fmt='{0:>9s}', end='')
+        print('')
+
+        for student in results:
+            current = results[student]['grade']
+            previous = old_results[student]['grade']
+            diff = current - previous
+            pndx = results[student]['pndx']
+
+            if pndx == 4:
+                print('{0:<25s}:'.format(student), end='')
+            elif pndx == 3:
+                prGreen(student, fmt='{0:<25s}:', end='')
+            elif pndx == 2:
+                prLightPurple(student, fmt='{0:<25s}:', end='')
+            elif pndx == 1:
+                prYellow(student, fmt='{0:<25s}:', end='')
+            else:
+                prRed(student, fmt='{0:<25s}:', end='')
+
+            if (previous > 80):
+                prGreen(previous, fmt='{0:4d}', end='')
+            elif (previous < 70):
+                prRed(previous, fmt='{0:4d}', end='')
+            else:
+                prYellow(previous, fmt='{0:4d}', end='')
+
+            print('->', end='')
+
+            if (current > 80):
+                prGreen(current, fmt='{0:4d}', end='')
+            elif (current < 70):
+                prRed(current, fmt='{0:4d}', end='')
+            else:
+                prYellow(current, fmt='{0:4d}', end='')
+
+            if (diff > 0):
+                prGreen(diff, fmt='{0:4d}', end='')
+            elif (diff < 0):
+                prRed(diff, fmt='{0:4d}', end='')
+            else:
+                prYellow(diff, fmt='{0:4d}', end='')
+
+            for t in targets:
+                current_lt = learning_targets[t['unit'] + t['target']][student]
+                previous_lt = old_learning_targets[t['unit'] + t['target']][student]
+
+                if (previous_lt >= 3):
+                    prGreen(previous_lt, fmt='{0:4d}', end='')
+                else:
+                    prRed(previous_lt, fmt='{0:4d}', end='')
+
+                print('->', end='')
+
+                if (previous_lt >= 3):
+                    prGreen(current_lt, end='')
+                else:
+                    prRed(current_lt, end='')
+
+            print('')
+
+    else:
+        for student in results:
+            if options.only_grades:
+                print('{0:d}'.format(results[student]['grade']));
+            else:
+                current = results[student]['grade']
+                pndx = results[student]['pndx']
+
+                if pndx == 4:
+                    print(' {0:<25s}: '.format(student), end='')
+                elif pndx == 3:
+                    prGreen(student, fmt='{0:<25s}:', end='')
+                elif pndx == 2:
+                    prLightPurple(student, fmt='{0:<25s}:', end='')
+                elif pndx == 1:
+                    prYellow(student, fmt='{0:<25s}:', end='')
+                else:
+                    prRed(student, fmt='{0:<25s}:', end='')
+
+                if (current > 80):
+                    prGreen(current, fmt='{0:4d}', end='')
+                elif (current < 70):
+                    prRed(current, fmt='{0:4d}', end='')
+                else:
+                    prYellow(current, fmt='{0:4d}', end='')
+
+                for t in targets:
+                    current_lt = learning_targets[t['unit'] + t['target']][student]
+
+                    if (current_lt >= 3):
+                        prGreen(current_lt, fmt='{0:4d}', end='')
+                    else:
+                        prRed(current_lt, fmt='{0:4d}', end='')
+
+                print('')
+
+
+if __name__ == "__main__":
+    main()
+

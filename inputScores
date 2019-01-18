@@ -1,0 +1,79 @@
+#!/usr/bin/env python
+
+import re
+import sqlite3
+from optparse import OptionParser
+
+def parseLearningTargets(targets=''):
+    target_list = targets.split(',')
+    output = []
+
+    for t in target_list:
+        m = re.search('(\d)(\w)', t)
+        output.append({'unit': m.group(1), 'target': m.group(2)})
+
+    return output
+
+def fetchStudents(conn, period):
+    c = conn.cursor()
+    c.execute('SELECT * FROM students WHERE period = :period', {"period": period})
+    return c.fetchall()
+
+def fetchStudent(conn, student_name):
+    c = conn.cursor()
+    c.execute("SELECT * FROM students WHERE name like :name", {"name": student_name })
+    return c.fetchone()
+
+def insertScore(conn, values):
+    try:
+        with conn:
+            conn.execute("INSERT INTO learning_targets (student_id, unit, target, date_marked, score, reassess) VALUES (:sid, :unit, :target, date('now'), :score, :reasses)", values)
+    except sqlite3.IntegrityError:
+        print("[WARN] Couldn't insert " + str(values))
+
+def addScores(cursor, student, targets, reasses):
+    print("Adding Scores for " + student['name'])
+    for t in targets:
+        score = input(t['unit'] + t['target'] + ': ')
+
+        insertScore(cursor, {
+            "sid" : student['id'],
+            "unit" : t["unit"],
+            "target" : t["target"],
+            "score" : score,
+            "reasses" : reasses
+        })
+
+def main():
+    parser = OptionParser()
+    # <target_names> <period>
+    # parser.add_option('-t', dest='target_names', default='')
+    parser.add_option('-p', dest='period', default='')
+    parser.add_option('-s', dest='student_name', default='')
+    (options, args) = parser.parse_args()
+
+    if len(args) == 0:
+        print('[ERROR] Must provide a list of learning_targets')
+        return
+
+    targets = parseLearningTargets(args[0])
+
+    connection = sqlite3.connect('db.sqlite')
+    connection.row_factory = sqlite3.Row
+
+    if len(options.student_name):
+        student = fetchStudent(connection, options.student_name)
+        addScores(connection, student, targets, 'TRUE')
+    else:
+        if len(options.period) == 0:
+            print('[ERROR] You must provide a period to search for...')
+            return
+
+        students = fetchStudents(connection, options.period)
+        for s in students:
+            addScores(connection, s, targets, 'FALSE')
+
+    connection.close()
+
+if __name__ == "__main__":
+    main()
