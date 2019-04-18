@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import re
 import sqlite3
@@ -9,7 +9,7 @@ def parseLearningTargets(targets=''):
     output = []
 
     for t in target_list:
-        m = re.search('(\d)(\w)', t)
+        m = re.search(r'(\d)(\w)', t)
         output.append({'unit': m.group(1), 'target': m.group(2)})
 
     return output
@@ -34,11 +34,11 @@ def insertScore(conn, values):
 def addScores(cursor, student, targets, reasses):
     print("Adding Scores for " + student['name'])
     for t in targets:
-        score = raw_input(t['unit'] + t['target'] + ': ')
+        score = input(t['unit'] + t['target'] + ': ')
 
         while score not in ['0', '1', '2', '3', '4', 'x']:
             print("Must enter 0, 1, 2, 3, or 4!")
-            score = raw_input(t['unit'] + t['target'] + ': ')
+            score = input(t['unit'] + t['target'] + ': ')
             
         if score == 'x':
             print("Skipped " + t['unit'] + t['target'])

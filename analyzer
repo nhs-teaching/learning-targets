@@ -130,7 +130,7 @@ def parseLearningTargets(targets=''):
     target_list = targets.split(',')
 
     for t in target_list:
-        m = re.search('(\d)(\w)', t)
+        m = re.search(r'(\d)(\w)', t)
         output.append({'unit': m.group(1), 'target': m.group(2)})
 
     return output
@@ -260,7 +260,7 @@ def main():
         
         for student in results:
             if options.only_grades:
-                print('{0:d}'.format(results[student]['grade']));
+                print('{0:d}'.format(results[student]['grade']))
             else:
                 
                 current = results[student]['grade']
